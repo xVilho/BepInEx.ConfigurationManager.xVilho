@@ -318,7 +318,10 @@ namespace ConfigurationManager
 
         private void OnGUI()
         {
-            if (DisplayingWindow)
+            if (!DisplayingWindow) return;
+
+            var defaultSkin = GUI.skin;
+            try
             {
                 SetUnlockCursor(0, true);
 
@@ -329,29 +332,65 @@ namespace ConfigurationManager
                 if (!_windowWasMoved)
                 {
                     if (GUI.Button(_screenRect, string.Empty, GUI.skin.box) && !SettingWindowRect.Contains(mousePosition))
+                    {
                         DisplayingWindow = false;
+                        return;
+                    }
 
                     // A custom skin draws the window background with its own window style
                     if (WindowSkin == null)
                         ImguiUtils.DrawWindowBackground(SettingWindowRect);
                 }
 
-                var defaultSkin = GUI.skin;
                 if (WindowSkin != null) GUI.skin = WindowSkin;
                 var newRect = GUILayout.Window(WindowId, SettingWindowRect, (GUI.WindowFunction)SettingsWindow, "Plugin / mod settings");
                 GUI.skin = defaultSkin;
 
-                if (newRect != SettingWindowRect)
+                // Only count it as moved if the position changed. GUILayout can resize the window on its own, which used to
+                // drop the full-screen backdrop right after opening.
+                if (newRect.x != SettingWindowRect.x || newRect.y != SettingWindowRect.y)
                 {
                     _windowWasMoved = true;
-                    SettingWindowRect = newRect;
-
                     _tipsWindowWasMoved = true;
                 }
+                SettingWindowRect = newRect;
+
+                // Clicking an empty part of the window takes focus away from the text field being edited
+                if (Event.current.type == EventType.MouseDown && GUIUtility.hotControl == 0 && SettingWindowRect.Contains(mousePosition))
+                    GUI.FocusControl(null);
 
                 if (!SettingFieldDrawer.SettingKeyboardShortcut && (!_windowWasMoved || SettingWindowRect.Contains(mousePosition)))
                     UnityInput.Current.ResetInputAxes();
             }
+            // ExitGUIException is how IMGUI aborts a pass on purpose, Unity handles it
+            catch (Exception ex) when (!IsExitGuiException(ex))
+            {
+                GUI.skin = defaultSkin;
+                LogGuiErrorOnce("OnGUI", ex);
+            }
+        }
+
+        private static bool IsExitGuiException(Exception ex)
+        {
+#if IL2CPP
+            // Unity's own exceptions arrive wrapped
+            return ex is Il2CppException && ex.Message.Contains(nameof(ExitGUIException));
+#else
+            return ex is ExitGUIException;
+#endif
+        }
+
+        private string _lastGuiError;
+
+        /// <summary>
+        /// OnGUI runs several times per frame, so only log an error again if it is a different one.
+        /// </summary>
+        private void LogGuiErrorOnce(string where, Exception ex)
+        {
+            var message = where + ": " + ex;
+            if (message == _lastGuiError) return;
+            _lastGuiError = message;
+            Logger.LogError("Error in " + message);
         }
 
         private static void DrawTooltip(Rect area)
@@ -385,6 +424,20 @@ namespace ConfigurationManager
         }
 
         private void SettingsWindow(int id)
+        {
+            try
+            {
+                DrawSettingsWindowContents();
+            }
+            catch (Exception ex) when (!IsExitGuiException(ex))
+            {
+                LogGuiErrorOnce("SettingsWindow", ex);
+                GUILayout.Label("Failed to draw the settings window, check log for details.");
+                GUI.DragWindow();
+            }
+        }
+
+        private void DrawSettingsWindowContents()
         {
             // The right column leaves room for an untranslated "Reset" button. A translated label is usually longer, and the
             // fixed-width fields then push the button past the right edge of the window, so grow the room by the difference.
@@ -723,7 +776,18 @@ namespace ConfigurationManager
 
             if (OverrideHotkey) return;
 
-            if (_keybind.Value.IsDown()) DisplayingWindow = !DisplayingWindow;
+            if (_keybind.Value.IsDown())
+            {
+                DisplayingWindow = !DisplayingWindow;
+            }
+            else if (DisplayingWindow && UnityInput.Current.GetKeyDown(KeyCode.Escape))
+            {
+                // Escape backs out of setting a key first, then closes the window
+                if (SettingFieldDrawer.SettingKeyboardShortcut)
+                    SettingFieldDrawer.CancelSettingKeyboardShortcut();
+                else
+                    DisplayingWindow = false;
+            }
         }
 
         private void LateUpdate()

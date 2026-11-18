@@ -25,11 +25,13 @@ namespace ConfigurationManager
 
         private static readonly Dictionary<SettingEntryBase, ComboBox> _comboBoxCache = new Dictionary<SettingEntryBase, ComboBox>();
         private static readonly Dictionary<SettingEntryBase, ColorCacheEntry> _colorCache = new Dictionary<SettingEntryBase, ColorCacheEntry>();
+        private static readonly Dictionary<SettingEntryBase, TextEditBuffer> _textBuffers = new Dictionary<SettingEntryBase, TextEditBuffer>();
 
         private static ConfigurationManager _instance;
 
         private static SettingEntryBase _currentKeyboardShortcutToSet;
         public static bool SettingKeyboardShortcut => _currentKeyboardShortcutToSet != null;
+        public static void CancelSettingKeyboardShortcut() => _currentKeyboardShortcutToSet = null;
 
         static SettingFieldDrawer()
         {
@@ -84,6 +86,7 @@ namespace ConfigurationManager
         public static void ClearCache()
         {
             _comboBoxCache.Clear();
+            _textBuffers.Clear();
             _rangeValueWidth = 0;
 
             foreach (var tex in _colorCache)
@@ -336,33 +339,26 @@ namespace ConfigurationManager
                 var strVal = Convert.ToString(value, CultureInfo.InvariantCulture).AppendZeroIfFloat(setting.SettingType);
                 var strMin = Convert.ToString(setting.AcceptableValueRange.Key, CultureInfo.InvariantCulture).AppendZeroIfFloat(setting.SettingType);
                 var strMax = Convert.ToString(setting.AcceptableValueRange.Value, CultureInfo.InvariantCulture).AppendZeroIfFloat(setting.SettingType);
-                var strResult = GUILayout.TextField(strVal, GUILayout.Width(RangeValueWidth(GUI.skin.textField, strVal, strMin, strMax)));
-                if (strResult != strVal)
+                DrawBufferedTextField(setting, strVal, text =>
                 {
-                    try
-                    {
-                        var resultVal = (float)Convert.ToDouble(strResult, CultureInfo.InvariantCulture);
-                        var clampedResultVal = Mathf.Clamp(resultVal, leftValue, rightValue);
-                        setting.Set(Convert.ChangeType(clampedResultVal, setting.SettingType, CultureInfo.InvariantCulture));
-                    }
-                    catch (FormatException)
-                    {
-                        // Ignore user typing in bad data
-                    }
-                }
+                    var resultVal = (float)Convert.ToDouble(NormalizeDecimalSeparator(text), CultureInfo.InvariantCulture);
+                    var clampedResultVal = Mathf.Clamp(resultVal, leftValue, rightValue);
+                    setting.Set(Convert.ChangeType(clampedResultVal, setting.SettingType, CultureInfo.InvariantCulture));
+                }, GUILayout.Width(RangeValueWidth(GUI.skin.textField, strVal, strMin, strMax)));
             }
         }
 
         private void DrawUnknownField(SettingEntryBase setting, int rightColumnWidth)
         {
+            var isFloat = IsFloatType(setting.SettingType);
+
             // Try to use user-supplied converters
             if (setting.ObjToStr != null && setting.StrToObj != null)
             {
                 var text = setting.ObjToStr(setting.Get()).AppendZeroIfFloat(setting.SettingType);
-                var result = GUILayout.TextField(text, GUILayout.Width(rightColumnWidth), GUILayout.MaxWidth(rightColumnWidth));
-
-                if (result != text)
-                    setting.Set(setting.StrToObj(result));
+                DrawBufferedTextField(setting, text,
+                    newText => setting.Set(setting.StrToObj(isFloat ? NormalizeDecimalSeparator(newText) : newText)),
+                    GUILayout.Width(rightColumnWidth), GUILayout.MaxWidth(rightColumnWidth));
             }
             else
             {
@@ -371,9 +367,9 @@ namespace ConfigurationManager
                 var value = rawValue == null ? "NULL" : Convert.ToString(rawValue, CultureInfo.InvariantCulture).AppendZeroIfFloat(setting.SettingType);
                 if (CanCovert(value, setting.SettingType))
                 {
-                    var result = GUILayout.TextField(value, GUILayout.Width(rightColumnWidth), GUILayout.MaxWidth(rightColumnWidth));
-                    if (result != value)
-                        setting.Set(Convert.ChangeType(result, setting.SettingType, CultureInfo.InvariantCulture));
+                    DrawBufferedTextField(setting, value,
+                        newText => setting.Set(Convert.ChangeType(isFloat ? NormalizeDecimalSeparator(newText) : newText, setting.SettingType, CultureInfo.InvariantCulture)),
+                        GUILayout.Width(rightColumnWidth), GUILayout.MaxWidth(rightColumnWidth));
                 }
                 else
                 {
@@ -383,6 +379,67 @@ namespace ConfigurationManager
 
             // When using MaxWidth the width will always be less than full window size, use this to fill this gap and push the Reset button to the right edge
             GUILayout.FlexibleSpace();
+        }
+
+        /// <summary>
+        /// Text field that keeps what the user types and only applies it to the setting when Enter is pressed.
+        /// Applying on every keystroke rewrote the text under the cursor (e.g. "1." became "1.0") and silently dropped partial
+        /// input like "-". If the text can't be applied the field turns red and keeps the text so it can be fixed.
+        /// If the setting's value changes from elsewhere (Reset button, slider, config file edited on disk), the field shows the new value.
+        /// </summary>
+        private static void DrawBufferedTextField(SettingEntryBase setting, string currentText, Action<string> apply, params GUILayoutOption[] options)
+        {
+            if (!_textBuffers.TryGetValue(setting, out var buffer) || buffer.Committed != currentText)
+            {
+                buffer = new TextEditBuffer { Text = currentText, Committed = currentText };
+                _textBuffers[setting] = buffer;
+            }
+
+            // Check before drawing the field, in case it uses the event
+            var currentEvent = Event.current;
+            var submit = currentEvent.type == EventType.KeyDown && (currentEvent.keyCode == KeyCode.Return || currentEvent.keyCode == KeyCode.KeypadEnter);
+
+            var origColor = GUI.color;
+            if (buffer.Invalid) GUI.color = Color.red;
+            var newText = GUILayout.TextField(buffer.Text, options);
+            GUI.color = origColor;
+
+            if (newText != buffer.Text)
+            {
+                buffer.Text = newText;
+                buffer.Invalid = false;
+            }
+
+            // Only fields with pending edits react to Enter
+            if (submit && buffer.Text != buffer.Committed)
+            {
+                try
+                {
+                    apply(buffer.Text);
+                    // Show the value as the setting stored it (clamped, normalized) on the next draw
+                    _textBuffers.Remove(setting);
+                    GUI.FocusControl(null);
+                }
+                catch (Exception ex)
+                {
+                    buffer.Invalid = true;
+                    ConfigurationManager.Logger.LogDebug($"Invalid value \"{buffer.Text}\" for setting {setting.DispName} - {ex.Message}");
+                }
+            }
+        }
+
+        private static bool IsFloatType(Type type) => type == typeof(float) || type == typeof(double) || type == typeof(decimal);
+
+        /// <summary>
+        /// Accept a comma as the decimal separator, as typed on keyboards from regions that use one.
+        /// </summary>
+        private static string NormalizeDecimalSeparator(string text) => text.Replace(',', '.');
+
+        private sealed class TextEditBuffer
+        {
+            public string Text;
+            public string Committed;
+            public bool Invalid;
         }
 
         private readonly Dictionary<Type, bool> _canCovertCache = new Dictionary<Type, bool>();

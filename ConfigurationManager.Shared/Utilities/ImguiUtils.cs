@@ -105,7 +105,8 @@ namespace ConfigurationManager.Utilities
                 _windowBackground = windowBackground;
             }
 
-            GUI.Box(position, GUIContent.none, new GUIStyle { normal = new GUIStyleState { background = _windowBackground } });
+            // DrawTexture instead of GUI.Box with a new GUIStyle, which allocated a style on every OnGUI call
+            GUI.DrawTexture(position, _windowBackground);
         }
 
         public static void DrawContolBackground(Rect position, Color color = default)
@@ -118,7 +119,7 @@ namespace ConfigurationManager.Utilities
                 _tooltipBg = background;
             }
 
-            GUI.Box(position, GUIContent.none, new GUIStyle { normal = new GUIStyleState { background = _tooltipBg } });
+            GUI.DrawTexture(position, _tooltipBg);
         }
 #endif
     }
