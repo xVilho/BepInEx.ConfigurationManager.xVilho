@@ -764,6 +764,10 @@ namespace ConfigurationManager
                 _curVisible = typeof(Screen).GetProperty("showCursor", BindingFlags.Static | BindingFlags.Public);
             }
 
+#if Mono
+            GameLookBlocker.TryInstall(this, Logger);
+#endif
+
             // Check if user has permissions to write config files to disk
             try { Config.Save(); }
             catch (IOException ex) { Logger.Log(LogLevel.Message | LogLevel.Warning, "WARNING: Failed to write to config directory, expect issues!\nError message:" + ex.Message); }
