@@ -27,6 +27,10 @@ namespace ConfigurationManager
     /// https://github.com/ManlyMarco/BepInEx.ConfigurationManager
     /// </summary>
     [BepInPlugin(GUID, "Configuration Manager", Constants.Version)]
+#if Mono
+    // Gold Mining Simulator DE fork: refuse to load without LeaderboardGuard (mods are banned in ranked runs).
+    [BepInDependency("xvilho.goldminingsim.leaderboardguard")]
+#endif
     [Browsable(false)]
     public class ConfigurationManager : BaseUnityPlugin
     {
