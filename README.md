@@ -1,3 +1,42 @@
+# Configuration Manager - Gold Mining Simulator DE fork
+
+- Original: [BepInEx/BepInEx.ConfigurationManager](https://github.com/BepInEx/BepInEx.ConfigurationManager)
+- This fork: [xVilho/BepInEx.ConfigurationManager.xVilho, branch `GoldMiningSimulatorDE`](https://github.com/xVilho/BepInEx.ConfigurationManager.xVilho/tree/GoldMiningSimulatorDE)
+- License: GNU LGPL v3.0, same as the original (see [LICENSE](LICENSE)).
+
+Fork of v19.1 for Gold Mining Simulator - Definitive Edition (BepInEx 5, Mono). Changes from the original:
+
+- **Game input blocked while the window is open** (`ConfigurationManager/GameLookBlocker.cs`). Harmony prefixes on the game's `InputService` query methods (`GetAxis1D`, `GetAxis2D`, `GetButton`, `GetButtonDown`, `TryConsumeToolCycleDown`, `TryConsumeVehicleButton`, `GetVehicleCameraZoom`) return zero/false while the window is open. `GetButtonUp` is left alone so key releases are never lost. `InputService` is resolved by name, so nothing is patched in other games.
+- New setting `General / Block game input while open` (default `true`).
+- **Requires LeaderboardGuard** (`[BepInDependency("xvilho.goldminingsim.leaderboardguard")]`, Mono build only). The game's EULA bans mods in Leaderboards mode; LeaderboardGuard blocks score uploads and ranked starts. Without it, this plugin does not load.
+
+General fixes in the settings window (`SettingFieldDrawer.cs`, `ConfigurationManager.cs`, `Utilities/ImguiUtils.cs`):
+
+- Comma or dot as decimal separator for float/double/decimal fields (`0,5` = `0.5`).
+- Text and number fields are buffered and apply on Enter/Keypad Enter. The original applied every keystroke, which rewrote `1.` to `1.0` under the cursor and dropped partial input like `-`.
+- Invalid input turns the field red and keeps the text; the error goes to the debug log.
+- A field shows the new value when the setting changes elsewhere (Reset, slider, config file edited on disk).
+- Esc cancels an active key bind, otherwise closes the window.
+- Clicking an empty area of the window clears text field focus.
+- Window move detection compares position only, so an automatic resize no longer drops the full-screen backdrop.
+- `OnGUI` and the window body are wrapped in try/catch (`ExitGUIException` passes through); each distinct error is logged once.
+- Backgrounds use `GUI.DrawTexture` instead of allocating a `GUIStyle` per `OnGUI` call.
+
+Known limit: hotkeys of other mods that read the keyboard directly (`UnityInput.Current`) still react while the window is open.
+
+### Install (GMS DE)
+1. Install BepInEx 5.4.23.x x64 into the game folder.
+2. Put `LeaderboardGuard.dll` ([Nexus](https://www.nexusmods.com/goldminingsimulatordefinitiveedition/mods/25)) into `BepInEx/plugins/`.
+3. Extract the release zip into the game folder (`BepInEx/plugins/ConfigurationManager/ConfigurationManager.dll`). Remove any other ConfigurationManager.dll first.
+4. Start the game and look for `Game input is blocked while the window is open` in `BepInEx/LogOutput.log`. Press F1.
+
+### Build
+`dotnet build -c Release`; the zip lands in `bin/`.
+
+The rest of this file is the original README.
+
+---
+
 ## Plugin / mod configuration manager for BepInEx
 An easy way to let user configure how a plugin behaves without the need to make your own GUI. The user can change any of the settings you expose, even keyboard shortcuts.
 
